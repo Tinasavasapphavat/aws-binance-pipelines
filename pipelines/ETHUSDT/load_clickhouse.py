@@ -16,6 +16,7 @@ table_name = config['pipelines'][symbol]['clickhouse_table']
 def main():
     process = ClickHouse(BASE_DIR,transform_path,table_name)
     process.get_data()
+    process.casting_dtypes()
     process.load_to_clickhouse() 
 
 
