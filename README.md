@@ -1,4 +1,4 @@
-# Databricks Binance Pipeline
+# Binance Pipeline
 
 This project is an automated data pipeline that extracts, processes, and loads cryptocurrency market data from the Binance API. It leverages Apache Airflow for orchestration and is containerized using Docker for easy deployment and scalability.
 
@@ -51,3 +51,47 @@ To run this project locally, ensure you have Docker and Docker Compose installed
    docker-compose up -d
 ```
 4. Access the Airflow UI at `http://localhost:8081` (default credentials: airflow/airflow) and enable your DAGs.
+
+---
+
+## CI/CD Pipeline
+
+This project uses **GitHub Actions** to automatically deploy changes to the EC2 instance on every push to the `main` branch — including direct commits and merged pull requests.
+
+### How it works
+
+```
+Push to main
+      ↓
+GitHub Actions detects what changed
+      ↓
+SSH into EC2 → git pull
+      ↓
+DAG/plugin change only?  →  No restart needed (volume-mounted, auto-picked up)
+Config/code change?      →  Rolling restart: scheduler → triggerer → worker → webserver
+      ↓
+Health check: polls /health until Airflow is back up
+```
+
+### Zero-downtime strategy
+
+Services are restarted one by one using `docker compose up -d --no-deps`, ensuring the webserver stays available as long as possible. The database (PostgreSQL) and message broker (Redis) are never restarted during deployments.
+
+### Deployment workflow
+
+The workflow is defined in `.github/workflows/deploy.yml`. It requires the following **GitHub Actions secrets** to be configured in the repository:
+
+| Secret | Description |
+|---|---|
+| `EC2_HOST` | Public IP or DNS of the EC2 instance |
+| `EC2_USER` | SSH user (e.g. `ec2-user`) |
+| `EC2_SSH_KEY` | Private key (`.pem` file contents) for SSH access |
+| `EC2_PROJECT_PATH` | Absolute path to the project on EC2 (e.g. `/home/ec2-user/airflow`) |
+
+### Trigger conditions
+
+| Event | Deploys? |
+|---|---|
+| Direct push to `main` | ✅ Yes |
+| Pull request merged into `main` | ✅ Yes |
+| Pull request opened (not merged) | ❌ No |
