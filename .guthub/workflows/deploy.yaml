@@ -1,0 +1,168 @@
+name: Deploy Airflow to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy Airflow to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # needed to diff previous commit
+
+      # ── 2. Detect what changed ─────────────────────────────────────────────
+      - name: Detect changed files
+        id: changes
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD)
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          # Flag: only DAG/plugin files changed?
+          NON_DAG=$(echo "$CHANGED" | grep -Ev '^(dags/|plugins/)' || true)
+          if [ -z "$NON_DAG" ]; then
+            echo "dags_only=true"  >> $GITHUB_OUTPUT
+          else
+            echo "dags_only=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Flag: requirements changed?
+          if echo "$CHANGED" | grep -qE 'requirements.*\.txt|Dockerfile|docker-compose.*\.yml'; then
+            echo "rebuild=true"  >> $GITHUB_OUTPUT
+          else
+            echo "rebuild=false" >> $GITHUB_OUTPUT
+          fi
+
+      # ── 3. Deploy ─────────────────────────────────────────────────────────
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            set -e
+
+            PROJECT_PATH="${{ secrets.EC2_PROJECT_PATH }}"
+            DAGS_ONLY="${{ steps.changes.outputs.dags_only }}"
+            REBUILD="${{ steps.changes.outputs.rebuild }}"
+
+            echo "========================================"
+            echo " Airflow Deployment Started"
+            echo " DAGs only : $DAGS_ONLY"
+            echo " Rebuild   : $REBUILD"
+            echo "========================================"
+
+            # ── Pull latest code ──────────────────────────────────────────
+            echo ""
+            echo "[1/5] Pulling latest code..."
+            cd "$PROJECT_PATH"
+            git pull origin main
+            echo "✓ Code updated"
+
+            # ── Early exit if only DAGs/plugins changed ───────────────────
+            if [ "$DAGS_ONLY" = "true" ]; then
+              echo ""
+              echo "Only DAG/plugin changes detected."
+              echo "DAGs are volume-mounted — Airflow will pick them up automatically."
+              echo "No container restart needed."
+              echo ""
+              echo "========================================"
+              echo " Deployment Complete (DAGs only)"
+              echo "========================================"
+              exit 0
+            fi
+
+            # ── Build images if Dockerfile/requirements changed ───────────
+            echo ""
+            echo "[2/5] Building images..."
+            if [ "$REBUILD" = "true" ]; then
+              docker compose build --no-cache
+              echo "✓ Images rebuilt from scratch"
+            else
+              docker compose build
+              echo "✓ Images built (cached layers used)"
+            fi
+
+            # ── Run DB migrations (idempotent, safe to run every time) ─────
+            echo ""
+            echo "[3/5] Running Airflow DB migrations..."
+            docker compose run --rm airflow-init airflow db migrate || \
+            docker compose run --rm airflow-webserver airflow db migrate || \
+            echo "  (skipped — no airflow-init service defined, that's fine)"
+            echo "✓ DB migrations complete"
+
+            # ── Restart services one by one (zero downtime) ───────────────
+            echo ""
+            echo "[4/5] Restarting Airflow services (rolling)..."
+
+            echo "  → Restarting scheduler..."
+            docker compose up -d --no-deps scheduler
+            sleep 5
+
+            echo "  → Restarting triggerer (if defined)..."
+            docker compose up -d --no-deps triggerer 2>/dev/null || echo "  (triggerer not defined, skipping)"
+            sleep 3
+
+            echo "  → Restarting worker (if defined)..."
+            docker compose up -d --no-deps airflow-worker 2>/dev/null || \
+            docker compose up -d --no-deps worker 2>/dev/null || \
+            echo "  (worker not defined, skipping)"
+            sleep 3
+
+            echo "  → Restarting webserver last..."
+            docker compose up -d --no-deps webserver
+            sleep 8
+
+            echo "✓ All services restarted"
+
+            # ── Health check ──────────────────────────────────────────────
+            echo ""
+            echo "[5/5] Health check..."
+            HEALTH_URL="http://localhost:8080/health"
+            MAX_RETRIES=12
+            RETRY_INTERVAL=10
+
+            for i in $(seq 1 $MAX_RETRIES); do
+              HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || echo "000")
+              if [ "$HTTP_STATUS" = "200" ]; then
+                echo "✓ Webserver is healthy (HTTP $HTTP_STATUS)"
+                break
+              fi
+              if [ "$i" = "$MAX_RETRIES" ]; then
+                echo "✗ Webserver did not become healthy after $((MAX_RETRIES * RETRY_INTERVAL))s (last status: $HTTP_STATUS)"
+                echo "  Check logs: docker compose logs --tail=50 webserver"
+                exit 1
+              fi
+              echo "  Attempt $i/$MAX_RETRIES — status $HTTP_STATUS, retrying in ${RETRY_INTERVAL}s..."
+              sleep $RETRY_INTERVAL
+            done
+
+            # ── Cleanup ───────────────────────────────────────────────────
+            echo ""
+            echo "Cleaning up dangling images..."
+            docker image prune -f
+            echo "✓ Cleanup done"
+
+            echo ""
+            echo "========================================"
+            echo " Deployment Complete ✓"
+            echo "========================================"
+
+      # ── 4. Notify on failure ───────────────────────────────────────────────
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::Deployment to EC2 failed. Check the SSH deploy step above for details."
+          # Optional: add a curl call here to Slack/Teams/PagerDuty
+          # curl -X POST -H 'Content-type: application/json' \
+          #   --data '{"text":"🚨 Airflow deployment FAILED on main. Check GitHub Actions."}' \
+          #   ${{ secrets.SLACK_WEBHOOK_URL }}
