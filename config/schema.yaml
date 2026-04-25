@@ -1,0 +1,20 @@
+data:
+  columns:
+    a: trade_id
+    p: price
+    q: quantity
+    f: first_trade_id
+    l: last_trade_id
+    T: timestamp_utc
+    m: is_maker
+    M: best_match
+
+  dtypes:
+    a: int64
+    p: double
+    q: double
+    f: int64
+    l: int64
+    T: int64
+    m: bool
+    M: bool

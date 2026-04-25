@@ -1,0 +1,24 @@
+main:
+  url: https://api4.binance.com/api/v3/aggTrades
+  limit: 1000
+
+pipelines:
+  BTCUSDT:
+    dataset: trades
+    table: BTCUSDT 
+    param_path: data/BTCUSDT/params.txt
+    raw_path: data/BTCUSDT/raw.csv
+    transform_path: data/BTCUSDT/transform.csv
+    s3_path: s3://databricks-binance-pipeline/BTCUSDT
+    clickhouse_table: btcusdt_trades
+
+  ETHUSDT:
+    dataset: trades
+    table: ETHUSDT
+    param_path: data/BTCUSDT/params.txt
+    raw_path: data/ETHUSDT/raw.csv
+    transform_path: data/ETHUSDT/transform.csv
+    s3_path: s3://databricks-binance-pipeline/ETHUSDT
+    clickhouse_table: ethusdt_trades
+
+    

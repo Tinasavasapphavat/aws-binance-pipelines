@@ -1,0 +1,7 @@
+__pycache__/
+airflow/logs/
+airflow/plugins/
+.env
+data/BTCUSDT/
+data/ETHUSDT/
+init.sh
