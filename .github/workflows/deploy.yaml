@@ -105,21 +105,15 @@ jobs:
             echo "[4/5] Restarting Airflow services (rolling)..."
 
             echo "  → Restarting scheduler..."
-            docker compose up -d --no-deps scheduler
+            docker compose up -d --no-deps airflow-scheduler
             sleep 5
 
-            echo "  → Restarting triggerer (if defined)..."
-            docker compose up -d --no-deps triggerer 2>/dev/null || echo "  (triggerer not defined, skipping)"
-            sleep 3
-
-            echo "  → Restarting worker (if defined)..."
-            docker compose up -d --no-deps airflow-worker 2>/dev/null || \
-            docker compose up -d --no-deps worker 2>/dev/null || \
-            echo "  (worker not defined, skipping)"
+            echo "  → Restarting worker..."
+            docker compose up -d --no-deps airflow-worker
             sleep 3
 
             echo "  → Restarting webserver last..."
-            docker compose up -d --no-deps webserver
+            docker compose up -d --no-deps airflow-webserver
             sleep 8
 
             echo "✓ All services restarted"
@@ -127,7 +121,7 @@ jobs:
             # ── Health check ──────────────────────────────────────────────
             echo ""
             echo "[5/5] Health check..."
-            HEALTH_URL="http://localhost:8080/health"
+            HEALTH_URL="http://localhost:8081/health"
             MAX_RETRIES=12
             RETRY_INTERVAL=10
 
@@ -139,7 +133,7 @@ jobs:
               fi
               if [ "$i" = "$MAX_RETRIES" ]; then
                 echo "✗ Webserver did not become healthy after $((MAX_RETRIES * RETRY_INTERVAL))s (last status: $HTTP_STATUS)"
-                echo "  Check logs: docker compose logs --tail=50 webserver"
+                echo "  Check logs: docker compose logs --tail=50 airflow-webserver"
                 exit 1
               fi
               echo "  Attempt $i/$MAX_RETRIES — status $HTTP_STATUS, retrying in ${RETRY_INTERVAL}s..."
