@@ -94,4 +94,4 @@ The workflow is defined in `.github/workflows/deploy.yml`. It requires the follo
 |---|---|
 | Direct push to `main` | ✅ Yes |
 | Pull request merged into `main` | ✅ Yes |
-| Pull request opened (not merged) | ❌ No |
+| Pull request opened (not merged) | ❌ No | 
